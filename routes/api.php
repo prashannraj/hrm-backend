@@ -22,6 +22,7 @@ use App\Http\Controllers\TravelController;
 use App\Http\Controllers\AssetController;
 use App\Http\Controllers\FleetController;
 use App\Http\Controllers\SettingsController;
+use App\Http\Controllers\AdminController;
 use App\Http\Middleware\CorsMiddleware;
 
 /*
@@ -36,7 +37,7 @@ use App\Http\Middleware\CorsMiddleware;
 */
 
 Route::prefix('v1')->group(function () {
-    
+     
     // Health Check
     Route::get('/health', function () {
         return response()->json([
@@ -51,7 +52,7 @@ Route::prefix('v1')->group(function () {
 
     // Protected Routes (using Sanctum token middleware)
     Route::middleware('auth:sanctum')->group(function () {
-        
+         
         // Auth Profiles & Agreements
         Route::get('/auth/me', [AuthController::class, 'me']);
         Route::post('/auth/sign-agreement', [AuthController::class, 'signAgreement']);
@@ -223,7 +224,7 @@ Route::prefix('v1')->group(function () {
             Route::post('/runs/{run}/reverse', [PayrollAccountingController::class, 'reverseRun']);
         });
 
-        // Financial Reports and Dashboards
+        // Financial Reports and Dashboards (Phase 9)
         Route::prefix('financial-reports')->group(function () {
             Route::get('/dashboard', [FinancialReportController::class, 'dashboard']);
             Route::get('/masters', [FinancialReportController::class, 'masters']);
@@ -232,6 +233,28 @@ Route::prefix('v1')->group(function () {
             Route::get('/profit-and-loss', [FinancialReportController::class, 'profitAndLoss']);
             Route::get('/balance-sheet', [FinancialReportController::class, 'balanceSheet']);
             Route::get('/cash-flow', [FinancialReportController::class, 'cashFlow']);
+            // Phase 9: Additional Reports
+            Route::get('/day-book', [FinancialReportController::class, 'dayBook']);
+            Route::get('/sales-register', [FinancialReportController::class, 'salesRegister']);
+            Route::get('/purchase-register', [FinancialReportController::class, 'purchaseRegister']);
+            Route::get('/receivables', [FinancialReportController::class, 'receivables']);
+            Route::get('/payables', [FinancialReportController::class, 'payables']);
+            Route::get('/ageing', [FinancialReportController::class, 'ageing']);
+            Route::get('/stock-ledger', [FinancialReportController::class, 'stockLedger']);
+            Route::get('/inventory-valuation', [FinancialReportController::class, 'inventoryValuation']);
+            Route::get('/vat-report', [FinancialReportController::class, 'vatReport']);
+            Route::get('/tds-report', [FinancialReportController::class, 'tdsReport']);
+            Route::get('/audit-report', [FinancialReportController::class, 'auditReport']);
+            // Phase 9: Export endpoint
+            Route::get('/export/{report}', [FinancialReportController::class, 'export']);
+        });
+
+        // Admin - Phase 10: Security and Integrity
+        Route::prefix('admin')->group(function () {
+            Route::get('/integrity-checks', [AdminController::class, 'integrityChecks']);
+            Route::post('/fiscal-year/close', [AdminController::class, 'closeFiscalYear']);
+            Route::post('/fiscal-year/reopen', [AdminController::class, 'reopenFiscalYear']);
+            Route::get('/user-permissions', [AdminController::class, 'userPermissions']);
         });
     });
 });

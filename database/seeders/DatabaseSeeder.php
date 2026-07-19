@@ -519,5 +519,6 @@ class DatabaseSeeder extends Seeder
         ]);
 
         $this->call(ErpAccountingCoreSeeder::class);
+        $this->call(ErpPermissionsSeeder::class);
     }
 }

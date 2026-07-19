@@ -173,6 +173,392 @@ class FinancialReportService
         ];
     }
 
+    // Phase 9: Additional Report Services
+
+    public function dayBook(int $companyId, int $fiscalYearId, ?string $from = null, ?string $to = null): Collection
+    {
+        return DB::table('erp_journal_vouchers')
+            ->where('company_id', $companyId)
+            ->where('fiscal_year_id', $fiscalYearId)
+            ->where('status', 'posted')
+            ->when($from, fn ($query) => $query->whereDate('voucher_date_ad', '>=', $from))
+            ->when($to, fn ($query) => $query->whereDate('voucher_date_ad', '<=', $to))
+            ->orderBy('voucher_date_ad')
+            ->orderBy('voucher_number')
+            ->select(
+                'id',
+                'voucher_type',
+                'voucher_number',
+                'voucher_date_ad',
+                'voucher_date_bs',
+                'narration',
+                'total_debit',
+                'total_credit'
+            )
+            ->get()
+            ->map(fn ($voucher) => (array) $voucher);
+    }
+
+    public function salesRegister(int $companyId, int $fiscalYearId, ?string $from = null, ?string $to = null): array
+    {
+        $documents = DB::table('erp_commercial_documents')
+            ->where('company_id', $companyId)
+            ->where('fiscal_year_id', $fiscalYearId)
+            ->whereIn('document_type', ['sales_invoice', 'tax_invoice', 'abbreviated_tax_invoice', 'proforma_invoice'])
+            ->where('status', 'posted')
+            ->when($from, fn ($query) => $query->whereDate('document_date_ad', '>=', $from))
+            ->when($to, fn ($query) => $query->whereDate('document_date_ad', '<=', $to))
+            ->orderBy('document_date_ad')
+            ->orderBy('document_number')
+            ->select(
+                'id',
+                'document_type',
+                'document_number',
+                'document_date_ad',
+                'document_date_bs',
+                'party_id',
+                'subtotal',
+                'discount_total',
+                'vat_total',
+                'tds_total',
+                'grand_total'
+            )
+            ->get();
+
+        $totalSales = round((float) $documents->sum('grand_total'), 2);
+        $totalVat = round((float) $documents->sum('vat_total'), 2);
+
+        return [
+            'documents' => $documents->map(fn ($doc) => (array) $doc),
+            'total_sales' => $totalSales,
+            'total_vat' => $totalVat,
+        ];
+    }
+
+    public function purchaseRegister(int $companyId, int $fiscalYearId, ?string $from = null, ?string $to = null): array
+    {
+        $documents = DB::table('erp_commercial_documents')
+            ->where('company_id', $companyId)
+            ->where('fiscal_year_id', $fiscalYearId)
+            ->whereIn('document_type', ['purchase_bill', 'purchase_return'])
+            ->where('status', 'posted')
+            ->when($from, fn ($query) => $query->whereDate('document_date_ad', '>=', $from))
+            ->when($to, fn ($query) => $query->whereDate('document_date_ad', '<=', $to))
+            ->orderBy('document_date_ad')
+            ->orderBy('document_number')
+            ->select(
+                'id',
+                'document_type',
+                'document_number',
+                'document_date_ad',
+                'document_date_bs',
+                'party_id',
+                'subtotal',
+                'discount_total',
+                'vat_total',
+                'tds_total',
+                'grand_total'
+            )
+            ->get();
+
+        $totalPurchases = round((float) $documents->sum('grand_total'), 2);
+        $totalVat = round((float) $documents->sum('vat_total'), 2);
+
+        return [
+            'documents' => $documents->map(fn ($doc) => (array) $doc),
+            'total_purchases' => $totalPurchases,
+            'total_vat' => $totalVat,
+        ];
+    }
+
+    public function receivables(int $companyId, int $fiscalYearId, ?string $asOf = null): array
+    {
+        $partyAccountIds = DB::table('erp_parties')
+            ->where('company_id', $companyId)
+            ->whereIn('party_type', ['customer', 'both'])
+            ->pluck('account_id');
+
+        $balances = $this->accountBalances($companyId, $fiscalYearId, null, $asOf);
+
+        $receivables = $balances->whereIn('id', $partyAccountIds->toArray())->map(function ($row) {
+            $balance = (float) $row->opening_debit + (float) $row->movement_debit - (float) $row->opening_credit - (float) $row->movement_credit;
+            return [
+                'account_id' => (int) $row->id,
+                'code' => $row->code,
+                'name' => $row->name,
+                'balance' => round($balance, 2),
+            ];
+        })->filter(fn ($item) => $item['balance'] > 0)->values();
+
+        return [
+            'receivables' => $receivables,
+            'total_receivables' => round((float) $receivables->sum('balance'), 2),
+        ];
+    }
+
+    public function payables(int $companyId, int $fiscalYearId, ?string $asOf = null): array
+    {
+        $partyAccountIds = DB::table('erp_parties')
+            ->where('company_id', $companyId)
+            ->whereIn('party_type', ['vendor', 'both'])
+            ->pluck('account_id');
+
+        $balances = $this->accountBalances($companyId, $fiscalYearId, null, $asOf);
+
+        $payables = $balances->whereIn('id', $partyAccountIds->toArray())->map(function ($row) {
+            $balance = (float) $row->opening_credit + (float) $row->movement_credit - (float) $row->opening_debit - (float) $row->movement_debit;
+            return [
+                'account_id' => (int) $row->id,
+                'code' => $row->code,
+                'name' => $row->name,
+                'balance' => round($balance, 2),
+            ];
+        })->filter(fn ($item) => $item['balance'] > 0)->values();
+
+        return [
+            'payables' => $payables,
+            'total_payables' => round((float) $payables->sum('balance'), 2),
+        ];
+    }
+
+    public function ageing(int $companyId, int $fiscalYearId, ?string $asOf = null, int $days = 30): array
+    {
+        $asOfDate = $asOf ? \Carbon\Carbon::parse($asOf) : \Carbon\Carbon::now();
+        $partyAccountIds = DB::table('erp_parties')
+            ->where('company_id', $companyId)
+            ->pluck('account_id');
+
+        $balances = $this->accountBalances($companyId, $fiscalYearId, null, $asOf);
+
+        $ageingData = $balances->whereIn('id', $partyAccountIds->toArray())->map(function ($row) use ($asOfDate, $days) {
+            $accountId = (int) $row->id;
+            $currentBalance = (float) $row->opening_debit + (float) $row->movement_debit - (float) $row->opening_credit - (float) $row->movement_credit;
+
+            if ($currentBalance <= 0) {
+                return null;
+            }
+
+            // Get last transaction date
+            $lastTxn = DB::table('erp_journal_lines')
+                ->join('erp_journal_vouchers', 'erp_journal_vouchers.id', '=', 'erp_journal_lines.journal_voucher_id')
+                ->where('erp_journal_lines.account_id', $accountId)
+                ->where('erp_journal_vouchers.company_id', $companyId)
+                ->where('erp_journal_vouchers.fiscal_year_id', $fiscalYearId)
+                ->where('erp_journal_vouchers.status', 'posted')
+                ->orderByDesc('erp_journal_vouchers.voucher_date_ad')
+                ->first();
+
+            $lastTxnDate = $lastTxn ? \Carbon\Carbon::parse($lastTxn->voucher_date_ad) : $asOfDate;
+            $daysOverdue = $asOfDate->diffInDays($lastTxnDate);
+
+            $bucket = $daysOverdue <= $days ? 'current' : ($daysOverdue <= $days * 2 ? 'over_30' : ($daysOverdue <= $days * 3 ? 'over_60' : 'over_90'));
+
+            return [
+                'account_id' => $accountId,
+                'code' => $row->code,
+                'name' => $row->name,
+                'balance' => round($currentBalance, 2),
+                'last_transaction_date' => $lastTxnDate->toDateString(),
+                'days_overdue' => $daysOverdue,
+                'bucket' => $bucket,
+            ];
+        })->filter()->values();
+
+        $buckets = [
+            'current' => $ageingData->where('bucket', 'current')->values(),
+            'over_30' => $ageingData->where('bucket', 'over_30')->values(),
+            'over_60' => $ageingData->where('bucket', 'over_60')->values(),
+            'over_90' => $ageingData->where('bucket', 'over_90')->values(),
+        ];
+
+        return [
+            'ageing' => $buckets,
+            'total_current' => round((float) $buckets['current']->sum('balance'), 2),
+            'total_over_30' => round((float) $buckets['over_30']->sum('balance'), 2),
+            'total_over_60' => round((float) $buckets['over_60']->sum('balance'), 2),
+            'total_over_90' => round((float) $buckets['over_90']->sum('balance'), 2),
+            'total_all' => round((float) $ageingData->sum('balance'), 2),
+        ];
+    }
+
+    public function stockLedger(int $companyId, int $fiscalYearId, ?int $itemId = null, ?int $warehouseId = null, ?string $from = null, ?string $to = null): array
+    {
+        $openingQuery = DB::table('erp_stock_valuation_layers')
+            ->where('company_id', $companyId)
+            ->when($itemId, fn ($q) => $q->where('item_id', $itemId))
+            ->when($warehouseId, fn ($q) => $q->where('warehouse_id', $warehouseId))
+            ->sum('value');
+
+        $openingValue = round((float) $openingQuery, 2);
+
+        $lines = DB::table('erp_stock_movement_lines')
+            ->join('erp_stock_movements', 'erp_stock_movements.id', '=', 'erp_stock_movement_lines.stock_movement_id')
+            ->join('erp_items', 'erp_items.id', '=', 'erp_stock_movement_lines.item_id')
+            ->leftJoin('erp_warehouses', 'erp_warehouses.id', '=', 'erp_stock_movement_lines.warehouse_id')
+            ->where('erp_stock_movements.company_id', $companyId)
+            ->where('erp_stock_movements.fiscal_year_id', $fiscalYearId)
+            ->where('erp_stock_movements.status', 'posted')
+            ->when($itemId, fn ($q) => $q->where('erp_stock_movement_lines.item_id', $itemId))
+            ->when($warehouseId, fn ($q) => $q->where('erp_stock_movement_lines.warehouse_id', $warehouseId))
+            ->when($from, fn ($q) => $q->whereDate('erp_stock_movements.movement_date_ad', '>=', $from))
+            ->when($to, fn ($q) => $q->whereDate('erp_stock_movements.movement_date_ad', '<=', $to))
+            ->orderBy('erp_stock_movements.movement_date_ad')
+            ->orderBy('erp_stock_movements.movement_number')
+            ->select(
+                'erp_stock_movement_lines.id',
+                'erp_items.sku as item_sku',
+                'erp_items.name as item_name',
+                'erp_warehouses.code as warehouse_code',
+                'erp_warehouses.name as warehouse_name',
+                'erp_stock_movement_lines.quantity_in',
+                'erp_stock_movement_lines.quantity_out',
+                'erp_stock_movement_lines.unit_cost',
+                'erp_stock_movement_lines.total_cost',
+                'erp_stock_movements.movement_number',
+                'erp_stock_movements.movement_date_ad',
+                'erp_stock_movements.movement_type'
+            )
+            ->get();
+
+        $runningQty = 0;
+        $runningValue = 0;
+        $lines = $lines->map(function ($line) use (&$runningQty, &$runningValue) {
+            $runningQty = round($runningQty + (float) $line->quantity_in - (float) $line->quantity_out, 2);
+            $runningValue = round($runningValue + (float) $line->total_cost, 2);
+            $line->running_quantity = $runningQty;
+            $line->running_value = $runningValue;
+            return $line;
+        });
+
+        return [
+            'opening_value' => $openingValue,
+            'lines' => $lines,
+            'closing_value' => $openingValue + $lines->sum('total_cost'),
+        ];
+    }
+
+    public function inventoryValuation(int $companyId, int $fiscalYearId, ?int $itemId = null, ?int $warehouseId = null): array
+    {
+        $query = DB::table('erp_stock_valuation_layers')
+            ->where('company_id', $companyId)
+            ->when($itemId, fn ($q) => $q->where('item_id', $itemId))
+            ->when($warehouseId, fn ($q) => $q->where('warehouse_id', $warehouseId))
+            ->select(
+                'item_id',
+                'warehouse_id',
+                \Illuminate\Support\Facades\DB::raw('SUM(remaining_quantity) as quantity'),
+                \Illuminate\Support\Facades\DB::raw('SUM(value) as value')
+            )
+            ->groupBy('item_id', 'warehouse_id')
+            ->orderBy('item_id');
+
+        $valuation = $query->get()->map(function ($row) {
+            return [
+                'item_id' => (int) $row->item_id,
+                'warehouse_id' => $row->warehouse_id ? (int) $row->warehouse_id : null,
+                'quantity' => round((float) $row->quantity, 2),
+                'value' => round((float) $row->value, 2),
+            ];
+        });
+
+        return [
+            'valuation' => $valuation,
+            'total_quantity' => round((float) $valuation->sum('quantity'), 2),
+            'total_value' => round((float) $valuation->sum('value'), 2),
+        ];
+    }
+
+    public function vatReport(int $companyId, int $fiscalYearId, ?string $from = null, ?string $to = null): array
+    {
+        $salesVat = DB::table('erp_commercial_document_lines')
+            ->join('erp_commercial_documents', 'erp_commercial_documents.id', '=', 'erp_commercial_document_lines.commercial_document_id')
+            ->where('erp_commercial_documents.company_id', $companyId)
+            ->where('erp_commercial_documents.fiscal_year_id', $fiscalYearId)
+            ->whereIn('erp_commercial_documents.document_type', ['sales_invoice', 'tax_invoice', 'abbreviated_tax_invoice'])
+            ->where('erp_commercial_documents.status', 'posted')
+            ->when($from, fn ($q) => $q->whereDate('erp_commercial_documents.document_date_ad', '>=', $from))
+            ->when($to, fn ($q) => $q->whereDate('erp_commercial_documents.document_date_ad', '<=', $to))
+            ->sum('vat_amount');
+
+        $purchaseVat = DB::table('erp_commercial_document_lines')
+            ->join('erp_commercial_documents', 'erp_commercial_documents.id', '=', 'erp_commercial_document_lines.commercial_document_id')
+            ->where('erp_commercial_documents.company_id', $companyId)
+            ->where('erp_commercial_documents.fiscal_year_id', $fiscalYearId)
+            ->whereIn('erp_commercial_documents.document_type', ['purchase_bill', 'purchase_return'])
+            ->where('erp_commercial_documents.status', 'posted')
+            ->when($from, fn ($q) => $q->whereDate('erp_commercial_documents.document_date_ad', '>=', $from))
+            ->when($to, fn ($q) => $q->whereDate('erp_commercial_documents.document_date_ad', '<=', $to))
+            ->sum('vat_amount');
+
+        return [
+            'sales_vat' => round((float) $salesVat, 2),
+            'purchase_vat' => round((float) $purchaseVat, 2),
+            'net_vat_payable' => round((float) $salesVat - (float) $purchaseVat, 2),
+        ];
+    }
+
+    public function tdsReport(int $companyId, int $fiscalYearId, ?string $from = null, ?string $to = null): array
+    {
+        $tdsDeducted = DB::table('erp_commercial_document_lines')
+            ->join('erp_commercial_documents', 'erp_commercial_documents.id', '=', 'erp_commercial_document_lines.commercial_document_id')
+            ->where('erp_commercial_documents.company_id', $companyId)
+            ->where('erp_commercial_documents.fiscal_year_id', $fiscalYearId)
+            ->where('erp_commercial_documents.status', 'posted')
+            ->when($from, fn ($q) => $q->whereDate('erp_commercial_documents.document_date_ad', '>=', $from))
+            ->when($to, fn ($q) => $q->whereDate('erp_commercial_documents.document_date_ad', '<=', $to))
+            ->sum('tds_amount');
+
+        return [
+            'tds_deducted' => round((float) $tdsDeducted, 2),
+        ];
+    }
+
+    public function auditReport(int $companyId, int $fiscalYearId, ?string $from = null, ?string $to = null): array
+    {
+        $cancelledInvoices = DB::table('erp_commercial_documents')
+            ->where('company_id', $companyId)
+            ->where('fiscal_year_id', $fiscalYearId)
+            ->where('status', 'cancelled')
+            ->count();
+
+        $invoiceGaps = DB::table('erp_billing_profiles')
+            ->where('company_id', $companyId)
+            ->where('fiscal_year_id', $fiscalYearId)
+            ->get()
+            ->map(function ($profile) {
+                $usedNumbers = DB::table('erp_commercial_documents')
+                    ->where('company_id', $profile->company_id)
+                    ->where('fiscal_year_id', $profile->fiscal_year_id)
+                    ->where('document_type', $profile->profile_type)
+                    ->pluck('document_number');
+
+                $gaps = [];
+                $expected = $profile->next_number;
+                for ($i = 1; $i < $expected; $i++) {
+                    $expectedNumber = $profile->prefix . str_pad((string) $i, $profile->padding, '0', STR_PAD_LEFT);
+                    if (!in_array($expectedNumber, $usedNumbers->toArray())) {
+                        $gaps[] = $expectedNumber;
+                    }
+                }
+                return $gaps;
+            })
+            ->flatten()
+            ->count();
+
+        $duplicatePans = DB::table('erp_parties')
+            ->where('company_id', $companyId)
+            ->whereNotNull('pan')
+            ->groupBy('pan')
+            ->havingRaw('COUNT(*) > 1')
+            ->count();
+
+        return [
+            'cancelled_invoices' => $cancelledInvoices,
+            'invoice_gaps' => $invoiceGaps,
+            'duplicate_pans' => $duplicatePans,
+        ];
+    }
+
     private function accountBalances(int $companyId, int $fiscalYearId, ?string $from = null, ?string $to = null): Collection
     {
         $movementSubquery = DB::table('erp_journal_lines')
