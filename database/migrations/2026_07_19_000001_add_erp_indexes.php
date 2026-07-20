@@ -54,9 +54,10 @@ return new class extends Migration
 
         // Stock Valuation Layer - additional indexes
         Schema::table('erp_stock_valuation_layers', function (Blueprint $table) {
-            $table->index(['company_id', 'item_id', 'warehouse_id'], 'erp_valuation_comp_item_wh_idx');
+            // $table->index(['company_id', 'item_id', 'warehouse_id'], 'erp_valuation_comp_item_wh_idx');
             $table->index(['item_id', 'remaining_quantity'], 'erp_valuation_item_qty_idx');
         });
+        
 
         // Parties - additional indexes
         Schema::table('erp_parties', function (Blueprint $table) {
