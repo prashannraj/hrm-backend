@@ -4,6 +4,8 @@ namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
 use App\Models\User;
+use App\Models\ErpRole;
+use App\Models\ErpCompany;
 use App\Models\Employee;
 use App\Models\AttendanceLog;
 use App\Models\LeaveRequest;
@@ -38,6 +40,45 @@ class DatabaseSeeder extends Seeder
             'signatureTitle' => 'Managing Director',
             'signatureType' => 'Type',
             'signatureData' => 'Prashann Raj',
+        ]);
+
+        User::create([
+            'fullName' => 'Finance Manager',
+            'email' => 'finance.manager@appan.com',
+            'password' => Hash::make('finance123'),
+            'companyName' => 'AppanTech',
+            'agreementSigned' => true,
+            'signatureDate' => '2026-06-12 10:05:00',
+            'signatureName' => 'Finance Manager',
+            'signatureTitle' => 'Finance Manager',
+            'signatureType' => 'Type',
+            'signatureData' => 'Finance Manager',
+        ]);
+
+        User::create([
+            'fullName' => 'Standard Staff',
+            'email' => 'standard.staff@appan.com',
+            'password' => Hash::make('staff123'),
+            'companyName' => 'AppanTech',
+            'agreementSigned' => true,
+            'signatureDate' => '2026-06-12 10:10:00',
+            'signatureName' => 'Standard Staff',
+            'signatureTitle' => 'Staff',
+            'signatureType' => 'Type',
+            'signatureData' => 'Standard Staff',
+        ]);
+
+        User::create([
+            'fullName' => 'External Auditor',
+            'email' => 'external.auditor@appan.com',
+            'password' => Hash::make('audit123'),
+            'companyName' => 'AppanTech',
+            'agreementSigned' => true,
+            'signatureDate' => '2026-06-12 10:15:00',
+            'signatureName' => 'External Auditor',
+            'signatureTitle' => 'External Auditor',
+            'signatureType' => 'Type',
+            'signatureData' => 'External Auditor',
         ]);
 
         // 2. Seed Employees
@@ -520,5 +561,27 @@ class DatabaseSeeder extends Seeder
 
         $this->call(ErpAccountingCoreSeeder::class);
         $this->call(ErpPermissionsSeeder::class);
+
+        // 13. Attach seeded users to ERP roles
+        $company = ErpCompany::first();
+        if ($company) {
+            $financeManagerRole = ErpRole::where('company_id', $company->id)->where('name', 'accountant')->first();
+            $standardStaffRole = ErpRole::where('company_id', $company->id)->where('name', 'viewer')->first();
+            $externalAuditorRole = ErpRole::where('company_id', $company->id)->where('name', 'viewer')->first();
+
+            $financeManager = User::where('email', 'finance.manager@appan.com')->first();
+            $standardStaff = User::where('email', 'standard.staff@appan.com')->first();
+            $externalAuditor = User::where('email', 'external.auditor@appan.com')->first();
+
+            if ($financeManager && $financeManagerRole) {
+                $financeManagerRole->users()->syncWithoutDetaching([$financeManager->id]);
+            }
+            if ($standardStaff && $standardStaffRole) {
+                $standardStaffRole->users()->syncWithoutDetaching([$standardStaff->id]);
+            }
+            if ($externalAuditor && $externalAuditorRole) {
+                $externalAuditorRole->users()->syncWithoutDetaching([$externalAuditor->id]);
+            }
+        }
     }
 }

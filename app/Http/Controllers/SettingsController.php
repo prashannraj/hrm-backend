@@ -33,6 +33,8 @@ class SettingsController extends Controller
                     ['type' => 'Paternity Leave', 'allocation' => 10, 'cashable' => false],
                     ['type' => 'Special Leave', 'allocation' => 6, 'cashable' => false]
                 ],
+                'logoUrl' => null,
+                'logoThumbUrl' => null,
                 'ssoConfig' => [
                     'provider' => 'Microsoft Entra ID (Azure AD)',
                     'clientId' => 'appan-hrm-enterprise-client-id-8839',
@@ -55,7 +57,14 @@ class SettingsController extends Controller
             $settings = new OrganizationSetting();
         }
 
-        $settings->fill($request->all());
+        $payload = $request->all();
+        if (isset($payload['logoUrl']) && $payload['logoUrl'] === '') {
+            $payload['logoUrl'] = null;
+        }
+        if (isset($payload['logoThumbUrl']) && $payload['logoThumbUrl'] === '') {
+            $payload['logoThumbUrl'] = null;
+        }
+        $settings->fill($payload);
         $settings->save();
 
         AuditLog::create([

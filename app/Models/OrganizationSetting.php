@@ -20,6 +20,8 @@ class OrganizationSetting extends Model
         'departments',
         'designations',
         'leavePolicies',
+        'logoUrl',
+        'logoThumbUrl',
         'ssoConfig',
     ];
 

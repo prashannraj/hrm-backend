@@ -213,6 +213,8 @@ return new class extends Migration
             $table->json('departments')->nullable();
             $table->json('designations')->nullable();
             $table->json('leavePolicies')->nullable();
+            $table->longText('logoUrl')->nullable();
+            $table->longText('logoThumbUrl')->nullable();
             $table->json('ssoConfig')->nullable();
             $table->timestamps();
         });
